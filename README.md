@@ -1,130 +1,123 @@
 # ShopBrasil - Pipeline de Preços com Airflow
 
-Esse projeto foi feito pra uma atividade da faculdade. A ideia é resolver um problema bem comum: a empresa fictícia ShopBrasil tinha um script Python rodando via cron que buscava dados de produtos numa API e gerava um painel de preços por categoria. O problema é que esse script era frágil — quando a API falhava de madrugada, ninguém ficava sabendo, e quando alguém rodava de novo na mão, os dados duplicavam no banco.
+Este projeto substitui um script Python agendado via cron, que era usado para gerar um painel de preços por categoria de produtos. O script antigo apresentava problemas: falhava silenciosamente quando a API instabilizava, duplicava dados quando era reexecutado manualmente, e exigia alteração de código a cada nova categoria de produto.
 
-Minha missão aqui foi trocar esse script por um pipeline de verdade, construído no Apache Airflow, que resolve todos esses problemas.
+O pipeline aqui construído resolve esses problemas usando Apache Airflow.
 
-## O que esse pipeline faz
+## O que o pipeline faz
 
-Todo dia, às 6h da manhã (horário de Brasília), ele faz isso sozinho:
+Todos os dias, às 6h da manhã (horário de Brasília), o pipeline executa automaticamente os seguintes passos:
 
-1. Busca a lista de produtos numa API pública de testes (a FakeStore API)
-2. Descobre quais categorias de produtos existem (eletrônicos, joias, roupas, etc.)
-3. Calcula, pra cada categoria, o preço médio, o preço mínimo, o preço máximo e quantos produtos tem
-4. Salva tudo isso numa tabela no banco de dados PostgreSQL
+1. Busca a lista de produtos na FakeStore API
+2. Identifica as categorias de produtos existentes
+3. Calcula, para cada categoria, o preço médio, mínimo, máximo e a quantidade de produtos
+4. Salva os resultados em uma tabela no PostgreSQL
 
-E o mais importante: se algo der errado no meio do caminho (a API cair, por exemplo), ele tenta de novo sozinho, indo aumentando o tempo de espera entre tentativas. E se alguém precisar rodar tudo de novo manualmente, ele não duplica os dados — só atualiza os números.
+Em caso de falha na comunicação com a API, o pipeline tenta novamente automaticamente, aumentando o tempo de espera entre as tentativas. Caso o pipeline seja executado novamente (reprocessamento), os dados não são duplicados — apenas atualizados.
 
-## Como o projeto está organizado
+## Estrutura do projeto
 
 ```
 shopbrasil-airflow-atividade/
 ├── dags/
-│   └── shopbrasil_pricing_pipeline.py   -> o código do pipeline
-├── logs/                                  -> logs gerados pelo Airflow (criado automaticamente)
-├── plugins/                               -> pasta padrão do Airflow (não usei nada aqui)
-├── config/                                -> pasta padrão do Airflow (não usei nada aqui)
-├── docker-compose.yaml                    -> sobe todo o ambiente (Airflow + bancos de dados)
-└── .env                                   -> uma configuração simples que o Docker precisa
+│   └── shopbrasil_pricing_pipeline.py   -> código do pipeline
+├── logs/                                  -> logs do Airflow (gerado automaticamente)
+├── plugins/                               -> pasta padrão do Airflow
+├── config/                                -> pasta padrão do Airflow
+├── docker-compose.yaml                    -> sobe o ambiente completo (Airflow + bancos)
+└── .env                                   -> variável de configuração do Docker
 ```
 
-## O que eu usei pra rodar tudo isso
+## Pré-requisitos
 
-Como eu uso Windows e não tinha nada configurado, precisei instalar algumas ferramentas antes:
+- Docker Desktop instalado e em execução (com WSL2 habilitado, no caso de Windows)
+- Git instalado
 
-- **Docker Desktop** (com o WSL2 ativado) - é o que permite rodar o Airflow e o banco de dados em "caixinhas" isoladas (containers), sem precisar instalar nada direto no Windows
-- **Git** - pra versionar o código e subir pro GitHub
-- **VS Code** - pra editar os arquivos
+## Como executar o projeto
 
-Importante: pra usar o Docker Desktop, foi preciso habilitar a virtualização na BIOS do computador (minha placa-mãe é uma ASUS B450M). Se alguém for rodar esse projeto e o Docker reclamar de "virtualization support not detected", é isso que precisa ser ativado lá na BIOS antes de mais nada.
-
-## Como rodar esse projeto do zero
-
-### 1. Pré-requisitos
-- Ter o Docker Desktop instalado e rodando (com WSL2 ativado, no caso do Windows)
-- Ter o Git instalado
-
-### 2. Clonar o repositório
+### 1. Clonar o repositório
 ```
 git clone <url-do-repositorio>
 cd shopbrasil-airflow-atividade
 ```
 
-### 3. Criar o arquivo de configuração
-Cria um arquivo chamado `.env` na raiz do projeto com essa linha dentro:
+### 2. Criar o arquivo de configuração
+Criar um arquivo `.env` na raiz do projeto com o seguinte conteúdo:
 ```
 AIRFLOW_UID=50000
 ```
 
-### 4. Inicializar o Airflow
-Esse comando só precisa ser rodado uma vez, na primeira vez que for usar o projeto:
+### 3. Inicializar o Airflow
+Comando executado apenas na primeira vez:
 ```
 docker compose up airflow-init
 ```
 
-### 5. Subir o ambiente
+### 4. Subir o ambiente
 ```
 docker compose up -d
 ```
 
-Isso vai demorar um pouco na primeira vez, porque o Docker precisa baixar as imagens. Depois disso, pra conferir se subiu tudo certo:
+Para verificar se todos os serviços subiram corretamente:
 ```
 docker compose ps
 ```
+Todos os serviços devem aparecer como `Up` ou `healthy`.
 
-Todos os serviços precisam aparecer como "Up" ou "healthy".
-
-### 6. Acessar o Airflow
-Abre o navegador em `http://localhost:8080`
+### 5. Acessar a interface do Airflow
+Endereço: `http://localhost:8080`
 
 - usuário: `admin`
 - senha: `admin`
 
-### 7. Configurar a conexão com o banco
-Dentro do Airflow, antes de rodar o pipeline pela primeira vez, é preciso configurar duas coisas (eu só fiz isso uma vez):
+### 6. Configurar a conexão com o banco de dados
 
-**Criar a conexão com o banco de dados:**
-- Vai em `Admin > Connections` e clica no `+`
-- Preenche assim:
-  - Connection Id: `postgres_analytics`
-  - Connection Type: `Postgres`
-  - Host: `postgres-analytics`
-  - Database: `analytics`
-  - Login: `analytics`
-  - Password: `analytics`
-  - Port: `5432`
+Em `Admin > Connections`, criar uma nova conexão com os seguintes dados:
 
-**Criar o "pool" que limita quantas tarefas rodam ao mesmo tempo:**
-- Vai em `Admin > Pools` e clica no `+`
-- Preenche assim:
-  - Pool: `ecommerce_pool`
-  - Slots: `2`
+| Campo | Valor |
+|---|---|
+| Connection Id | `postgres_analytics` |
+| Connection Type | `Postgres` |
+| Host | `postgres-analytics` |
+| Database | `analytics` |
+| Login | `analytics` |
+| Password | `analytics` |
+| Port | `5432` |
 
-### 8. Ativar e rodar o pipeline
-- Na lista de DAGs, procura por `shopbrasil_pricing_pipeline`
-- Ativa o botãozinho ao lado do nome dele (de cinza pra azul)
-- Clica no nome do DAG e depois no botão de "play" (▶) pra disparar uma execução manualmente, sem precisar esperar até às 6h da manhã
+### 7. Configurar o pool de concorrência
 
-### 9. Conferir se funcionou
-Pode acompanhar a execução na própria tela do Airflow (aba "Graph" ou "Grid"). Se tudo ficar verde, deu certo.
+Em `Admin > Pools`, criar um novo pool:
 
-Pra conferir os dados direto no banco, dá pra rodar esse comando no terminal:
+| Campo | Valor |
+|---|---|
+| Pool | `ecommerce_pool` |
+| Slots | `2` |
+
+### 8. Ativar e executar o pipeline
+
+Na lista de DAGs, localizar `shopbrasil_pricing_pipeline`, ativá-lo e disparar uma execução manual pelo botão de play.
+
+### 9. Verificar o resultado
+
+O progresso pode ser acompanhado nas abas "Graph" ou "Grid" da interface do Airflow.
+
+Para consultar os dados gravados diretamente no banco:
 ```
 docker exec -it shopbrasil-airflow-atividade-postgres-analytics-1 psql -U analytics -d analytics -c "SELECT * FROM category_price_metrics;"
 ```
 
-Deve aparecer uma linha pra cada categoria de produto, com o preço médio, mínimo, máximo e a quantidade de produtos.
+## Validação de idempotência
 
-## Como eu testei que não duplica dados
+Para confirmar que o pipeline não duplica dados ao ser reprocessado, a mesma execução foi disparada duas vezes. Em ambas as vezes a tabela manteve o mesmo número de linhas (uma por categoria), com apenas o campo de data de atualização sendo alterado — evidenciando que ocorreu uma atualização (`UPDATE`) e não uma nova inserção.
 
-Esse era um dos requisitos mais importantes: mesmo rodando o pipeline de novo, ele não pode duplicar as informações no banco. Eu testei isso na prática rodando o pipeline duas vezes seguidas e comparando o resultado.
+## Decisões técnicas
 
-Na primeira vez que rodou, apareceram 4 linhas na tabela (uma por categoria). Quando rodei de novo, continuaram aparecendo as mesmas 4 linhas — só que com o horário de atualização mais recente. Ou seja, ele atualizou os dados, mas não criou linhas duplicadas. Isso acontece porque a tabela tem uma regra (constraint) que impede duas linhas com a mesma categoria e mesma data, e o código usa um comando que, se já existir aquela combinação, atualiza em vez de inserir de novo.
+**Separação entre banco de metadados do Airflow e banco analítico:** o Airflow utiliza um banco próprio para controlar suas execuções internas. O banco onde ficam os dados de preços foi mantido separado, refletindo uma arquitetura mais próxima de um ambiente real, em que o orquestrador e o banco de dados analítico não compartilham a mesma instância.
 
-## Algumas decisões que tomei
+**Categorias extraídas dinamicamente:** as categorias de produtos não estão fixas no código. Elas são extraídas a partir dos produtos retornados pela API a cada execução. Isso permite que o pipeline processe automaticamente novas categorias, sem necessidade de alteração de código.
 
-- **Por que separei o banco do Airflow do banco da análise?** O Airflow precisa de um banco próprio só pra controlar as execuções dele (isso é interno, eu nem mexo nele diretamente). Achei mais correto deixar o banco onde ficam os dados de preços separado, simulando como seria numa empresa de verdade, onde o orquestrador e o banco de dados analítico não são a mesma coisa.
+**Pool de concorrência com 2 slots:** como o cálculo de métricas roda em paralelo (uma tarefa por categoria), o pool limita a quantidade de tarefas executando simultaneamente, evitando sobrecarga na API ou no banco de dados.
 
-- **Por que as categorias não estão fixas no código?** Porque um dos requisitos era que o pipeline "escalasse sozinho" quando aparecessem categorias novas. Então, em vez de eu escrever uma lista fixa tipo "eletrônicos, roupas, joias", o código pega as categorias direto dos produtos que vêm da API. Se amanhã a API tiver uma categoria nova, o pipeline já processa ela automaticamente, sem eu precisar mudar nada no código.
+## Observação sobre credenciais
 
-- **Por que existe um "pool" com 2 slots?** Como o cálculo das métricas roda em paralelo (uma tarefa por categoria), o pool limita pra no máximo 2 dessas tarefas rodarem ao mesmo tempo. Isso evita sobrecarregar a API ou o banco de dados com muitas chamadas simultâneas.
+As credenciais presentes no `docker-compose.yaml` (usuários e senhas de banco de dados e do Airflow) são valores padrão de ambiente local de desenvolvimento/estudo. Não representam credenciais de produção e não estão expostas externamente, pois os serviços rodam isoladamente em containers Docker.
